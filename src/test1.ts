@@ -13,6 +13,8 @@ const matchEither = <L, R, Lr, Rr>(
 
 const tail = <R extends any[]>([_, ...tail]: [any, ...R]) => tail;
 const head = <T>([head, ..._]: [T, ...any[]]) => head;
+const first = head;
+const second = <T>([__, second, ..._]: [any, T, ...any[]]) => second;
 
 document.head.appendChild(E("style", el => {
 	el.innerHTML = `
@@ -155,8 +157,8 @@ const parse = (toks: Token[]) => {
 
 	const forall = parser(
 		isToken({ type: 'forall' })
-		.seq(name).to(tail).to(head)
-		.seq(isToken({ type: 'dot' })).to(head)
+		.seq(name).to(second)
+		.seq(isToken({ type: 'dot' })).to(first)
 	);
 
 	return forall(toks);
