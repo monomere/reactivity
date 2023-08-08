@@ -167,3 +167,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.\*
+
+src/*.bak.ts
+*.bak.ts
+.local

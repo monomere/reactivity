@@ -114,12 +114,20 @@ currentState.effect((state) => {
 					headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
 				});
 			};
+		routes[entryPathToWebPath(entryPath) + '.map'] =
+			async () => {
+				const buffer = await fs.readFile(entryPath + '.map');
+				return new Response(buffer, {
+					headers: { 'Content-Type': 'application/json; charset=utf-8' }
+				});
+			};
 	}	
 });
 
 allEntrypoints.update(['./src/index.ts']);
 
 const server = Bun.serve({
+	port: 3000,
 	fetch(req) {
 		const url = new URL(req.url);
 		if (req.method === "GET" && Object.hasOwn(routes, url.pathname)) {
