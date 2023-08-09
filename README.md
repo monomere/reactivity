@@ -8,18 +8,20 @@ Currently, this is a small System Fω implementaion in functional-ish typescript
 
 > Note: the screenshots are using Dark Reader. I'll add dark styles sooner or later.
 
+The interesting part of the source code is at [src/test1.ts](src/test1.ts)
+
 ## using
 
-To install dependencies:
+> Note: this uses bun!
+
+to install dependencies:
 
 ```bash
 bun install
 ```
 
-To run:
+to run:
 
 ```bash
 bun run build.ts
 ```
-
-This project was created using `bun init` in bun v0.6.14. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
