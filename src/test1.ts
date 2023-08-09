@@ -57,10 +57,13 @@ pre.result.error {
 type TokenType =
 	| 'name' // [a-zA-Z0-9_]+
 	| 'forall' // 'forall'
+	| 'let' // 'let'
+	| 'in' // 'in'
 	| 'dot' // '.'
 	| 'lambda' // '\'
 	| 'colon' // ':'
 	| 'arrow' // '->'
+	| 'equals' // '='
 	| 'open-paren' | 'close-paren' // '(' ')'
 	| 'open-brace' | 'close-brace' // '{' '}'
 	;
@@ -71,10 +74,13 @@ t === undefined ? `undefined` :
 ({
 	'name': `${t.value}`,
 	'forall': `∀`,
+	'let': `let`,
+	'in': `in`,
 	'dot': `.`,
 	'lambda': `λ`,
 	'colon': `:`,
 	'arrow': `→`,
+	'equals': `=`,
 	'open-paren': `(`,
 	'close-paren': `)`,
 	'open-brace': `{`,
@@ -91,11 +97,14 @@ const tokenEqual = (a: Token, b: Token) =>
 const tokenize = (source: string): Either<string, Token[]> => {
 	const types: [RegExp, TokenType?, number?][] = [
 		[/^\s+/],
+		[/^in/, 'in'],
+		[/^let/, 'let'],
 		[/^(forall|[Λ∀])/, 'forall'],
 		[/^[\w_]+/, 'name', 0],
 		[/^\./, 'dot'],
 		[/^[\\λ]/, 'lambda'],
 		[/^:/, 'colon'],
+		[/^=/, 'equals'],
 		[/^(->|[→])/, 'arrow'],
 		[/^\(/, 'open-paren'], [/^\)/, 'close-paren'],
 		[/^\{/, 'open-brace'], [/^\}/, 'close-brace'],
@@ -104,7 +113,6 @@ const tokenize = (source: string): Either<string, Token[]> => {
 	while (source.length) {
 		let added = false;
 		for (const [regexp, type, group] of types) {
-			
 			const m = source.match(regexp);
 			if (m) {
 				source = source.slice(m[0].length);
@@ -291,8 +299,27 @@ const parse = (toks: Token[]) => {
 			)
 		));
 
-	const expression = () => oneOrMore(atom()).to(([x, ...xs]) =>
-		xs.reduce<Ast>((lhs, rhs) => ({ $: 'apply', lhs, rhs }), x));
+	const letexpr = (): Parser<Ast> =>
+		isToken({ type: 'let' })
+		.seql(name).to(second)
+		.seq(isToken({ type: 'colon' })).to(first)
+		.seql(type)
+		.seq(isToken({ type: 'equals' })).to(first)
+		.seql(expression)
+		.seq(isToken({ type: 'in' })).to(first)
+		.seql(expression)
+		.to(([[[name, type], value], body]) => ({
+			$: 'apply',
+			lhs: { $: 'lambda', name, type, body },
+			rhs: value
+		}));
+
+
+	const expression = () => eitherOf(
+		letexpr(),
+		oneOrMore(atom()).to(([x, ...xs]) =>
+			xs.reduce<Ast>((lhs, rhs) => ({ $: 'apply', lhs, rhs }), x))
+	);
 
 	const declaration = () =>
 		isToken({ type: 'open-paren' })
@@ -332,6 +359,10 @@ const parse = (toks: Token[]) => {
 const exhaustedError = (v: any) => {
 	throw new Error(`match$ exhausted by ${JSON.stringify(v)}`);
 };
+
+const typecheckError = (message: string) => {
+	throw new Error(`typecheck error: ${message}`);
+}
 
 const evalError = (message: string) => {
 	throw new Error(`eval error: ${message}`);
@@ -401,7 +432,7 @@ const typeBetaReduce = (n: EvalType, repl: Typename, v: EvalType): EvalType => m
 const typeAstEval = (ctx: TypecheckCtx, n: TypeAst): EvalType => match$(n, {
 	apply: ({ lhs, rhs }) => match$(typeAstEval(ctx, lhs), {
 		generic: ({ name, body }) => typeBetaReduce(body, name, typeAstEval(ctx, rhs))
-	}, (v) => evalError(`type ${typeToString(v)} is not a generic type.`) as EvalType),
+	}, (v) => typecheckError(`type ${typeToString(v)} is not a generic type.`) as EvalType),
 	arrow: ({ lhs, rhs }) => <EvalType>{
 		$: 'arrow',
 		lhs: typeAstEval(ctx, lhs),
@@ -414,7 +445,7 @@ const typeAstEval = (ctx: TypecheckCtx, n: TypeAst): EvalType => match$(n, {
 	},
 	name: ({ name }) => ctx.types.get(name) ?? (name.startsWith('_')
 		? <EvalType>{ $: 'literal', name: name.toUpperCase() }
-		: evalError(`no such type '${name}'`)
+		: typecheckError(`no such type '${name}'`)
 	),
 });
 
@@ -450,18 +481,18 @@ const astTypecheck = (ctx: TypecheckCtx, n: Ast): EvalType => match$(n, {
 		arrow: ({ lhs: lhst, rhs: rhst }) => letIn(astTypecheck(ctx, rhs), argt =>
 			typeEqual(argt, lhst)
 			? rhst
-			: evalError(`${typeToString(argt)} is incompatible with ${typeToString(lhst)}.`
+			: typecheckError(`${typeToString(argt)} is incompatible with ${typeToString(lhst)}.`
 			)
 		)
-	}, (v) => evalError(`value ${typeToString(v)} is not an arrow type.`) as EvalType),
+	}, (v) => typecheckError(`value ${typeToString(v)} is not an arrow type.`) as EvalType),
 	inst: ({ expr, type }) => match$(astTypecheck(ctx, expr), {
 		generic: ({ name, body }) => typeBetaReduce(body, name, typeAstEval(ctx, type))
-	}, (v) => evalError(
+	}, (v) => typecheckError(
 		`cannot instantiate ${typeToString(v)}, it's not generic.`) as EvalType
 	),
 	name: ({ name }) => name.startsWith('_')
 		? <EvalType>{ $: 'literal', name: name.toUpperCase() }
-		: ctx.vals.get(name) ?? evalError(`no such binding '${name}'`),
+		: ctx.vals.get(name) ?? typecheckError(`no such binding '${name}'`),
 });
 
 const astEval = (ctx: EvalCtx, n: Ast): EvalVal => match$(n, {
@@ -477,30 +508,35 @@ const astEval = (ctx: EvalCtx, n: Ast): EvalVal => match$(n, {
 	),
 });
 
-const eitherMayThrow = <F extends (...args: any[]) => Either<[string, ...any], any>>(
-	f: F, ...args: Parameters<F>
-) => {
-	try {
-		return f(...args);
-	} catch (e: any) {
-		if (e instanceof Error) {
-			console.error(e);
-			// return Left([`${e.name}: ${e.message}\n${e.stack ?? ''}`]);
-		}
-		return Left([e.toString()]);
-	}
-}
+// const eitherMayThrow = <F extends (...args: any[]) => Either<[string, ...any], any>>(
+// 	f: F, ...args: Parameters<F>
+// ): ReturnType<F> => {
+// 	try {
+// 		return f(...args) as ReturnType<F>;
+// 	} catch (e: any) {
+// 		let message = e.toString();
+// 		if (e instanceof Error) {
+// 			message = e.message;
+// 			console.error(e);
+// 			// return Left([`${e.name}: ${e.message}\n${e.stack ?? ''}`]);
+// 		}
+// 		return Left([message]) as ReturnType<F>;
+// 	}
+// }
+
 const throwToEither = <F extends (...args: any[]) => any>(
 	f: F, ...args: Parameters<F>
 ): Either<string, ReturnType<F>> => {
 	try {
 		return Right(f(...args));
 	} catch (e: any) {
+		let message = e.toString();
 		if (e instanceof Error) {
+			message = e.message;
 			console.error(e);
 			// return Left(`${e.name}: ${e.message}\n${e.stack ?? ''}`);
 		}
-		return Left(e.toString());
+		return Left(message);
 	}
 }
 
@@ -515,7 +551,7 @@ const language = (source: string, show: null | LanguageShowType) => {
 	if ('left' in toks) return toks;
 	if (show === 'toks') return Right(toks.right.map(tokenToString).join(' '));
 
-	const ast = eitherMayThrow(parse, toks.right);
+	const ast = (parse(toks.right));
 	if ('left' in ast) return Left(ast.left[0]);
 
 	const indentString = (indent: number) =>
@@ -535,6 +571,7 @@ const language = (source: string, show: null | LanguageShowType) => {
 		return s;
 	};
 
+	if (ast.right[1].length > 0) return Left(`excess tokens at the end of input!`);
 	if (show === 'ast') return Right(`${stringify(ast.right[0])}`);
 
 	const tcCtx: TypecheckCtx = { vals: new Map(), types: new Map() };
@@ -562,9 +599,11 @@ document.body.append(E("main", el => {
 		// `x((x:x).x x)`,
 		// `(((λ(id: ∀a. a → a). ∀a b. λ(f: (a → a) → a → b) (x: a). f id{a} x )(∀a. λ(x: a). x)){_A}{_B})( (x:x).x x)`,
 		`((λ(id: ∀a. a → a). ∀a b. λ(f: (a → a) → a → b) (x: a). f id{a} x)(∀a. λ(x: a). x)) {_A} {_B}`
+		+ ` (λ(f: _A → _A) (x: _A). _b) _a`,
+		`let id: ∀a. a → a = ∀a. λ(x: a). x in (∀a b. λ(f: (a → a) → a → b) (x: a). f id{a} x) {_A} {_B}`
 		+ ` (λ(f: _A → _A) (x: _A). _b) _a`
 	];
-	const inputState = new BasicState(examples[3]);
+	const inputState = new BasicState(examples[examples.length - 1]);
 	const resultState = new BasicState<Either<string, string> | null>(null);
 	const typeState = new BasicState<LanguageShowType | null>('types');
 
@@ -573,6 +612,13 @@ document.body.append(E("main", el => {
 		([value, type]) => resultState.update(language(value, type))
 	);
 
+	const inputElement: HTMLInputElement = E("input", el => {
+		el.placeholder = "Code";
+		el.classList.add("code");
+		effectNow(inputState, setter(el, 'value'));
+		el.oninput = () => inputState.update(el.value);
+	});
+
 	el.append(
 		E("div", el => {
 			el.classList.add("input-wrap");
@@ -580,14 +626,12 @@ document.body.append(E("main", el => {
 				...["λ", "∀", "→"].map(char => E("button", el => {
 					el.classList.add("small");
 					el.textContent = char;
-					el.oninput = () => inputState.update(inputState.get() + char);
+					el.onclick = () => {
+						inputState.update(inputState.get() + char);
+						inputElement.focus();
+					}
 				})),
-				E("input", el => {
-					el.placeholder = "Code";
-					el.classList.add("code");
-					effectNow(inputState, setter(el, 'value'));
-					el.oninput = () => inputState.update(el.value);
-				}),
+				inputElement,
 				E("select", el => {
 					const possibleValues = {
 						'': "None",
